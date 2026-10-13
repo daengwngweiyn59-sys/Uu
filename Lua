@@ -1,0 +1,681 @@
+--[[
+	KeyUI + GoreBoxUI  (LocalScript)  -- ระบบคีย์ธีม RANSOM ต่อกับ GoreBox UI
+	วางไว้ที่: StarterPlayer > StarterPlayerScripts  (ต้องเป็น LocalScript)
+
+	ลำดับ:
+	  1) หน้าจอแดงมีสัญญาณรบกวน + แถบ LOADING
+	  2) หน้าต่าง RANSOM / หน้าต่างกลิตช์ผุดขึ้นมาเรื่อย ๆ
+	  3) มีหน้าต่าง "KEY" โผล่ขึ้นมาปนอยู่ -> กดที่หน้าต่างนั้นเพื่อถอดรหัสหาคีย์
+	  4) พิมพ์คีย์ (EXE) ในช่อง ENTER KEY -> ปลดล็อก
+	  5) ปลดล็อกแล้วเริ่ม GoreBox UI: ข้อความต้อนรับ -> ดาวหมุน -> สี่เหลี่ยมดำขยาย -> กล่อง gorebox
+
+	หมายเหตุ: คีย์ที่เช็คฝั่งไคลเอนต์ไม่ปลอดภัย 100% เหมาะกับการตกแต่ง/กั้นแบบง่าย ๆ เท่านั้น
+]]
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local UIS = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+if not player then
+	warn("[KeyUI] ต้องเป็น LocalScript เท่านั้น (ไม่ใช่ Script ธรรมดา) วางใน StarterPlayer > StarterPlayerScripts")
+	return
+end
+print("[KeyUI] เริ่มทำงาน")
+
+-- ================== ตั้งค่า KEY ==================
+local KEY = "EXE"
+local CASE_SENSITIVE = false
+local LOADING_TIME = 2.6
+local SPAWN_EVERY = 0.4
+local MAX_WINDOWS = 9
+local KEY_APPEARS_AFTER = 3
+
+-- ================== ตั้งค่า GoreBox UI ==================
+local MUSIC_ID = 90521568613709
+local MUSIC_VOLUME = 0.6
+local TITLE = "gorebox"
+local WELCOME = "ยินดีต้อนรับเข้าสู่ UI ของเรา"
+local BOX_W, BOX_H = 440, 310
+local SHOW_CONTROLS = true
+
+local MAGENTA = Color3.fromRGB(220, 60, 220)
+local TITLE_COLOR = Color3.fromRGB(240, 0, 255)
+local STAR_COLOR = Color3.fromRGB(65, 75, 250)
+local X_COLOR = Color3.fromRGB(160, 70, 190)
+local BLACK = Color3.new(0, 0, 0)
+
+local Quad, Quint, Back = Enum.EasingStyle.Quad, Enum.EasingStyle.Quint, Enum.EasingStyle.Back
+local Out, In = Enum.EasingDirection.Out, Enum.EasingDirection.In
+local rng = Random.new()
+
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	o.Parent = parent
+	return o
+end
+
+local function tween(obj, t, style, dir, props)
+	local tw = TweenService:Create(obj, TweenInfo.new(t, style, dir), props)
+	tw:Play()
+	return tw
+end
+
+-- =====================================================================
+-- ส่วนที่ 1: ระบบคีย์ธีม RANSOM
+-- =====================================================================
+local calcScale = function()
+	local cam = workspace.CurrentCamera
+	local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
+	return math.clamp(math.min(vp.X / 700, vp.Y / 380), 0.55, 1.1)
+end
+local S = calcScale()
+
+local gui = new("ScreenGui", {
+	Name = "KeyUI",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	DisplayOrder = 200,
+}, player:WaitForChild("PlayerGui"))
+
+local alive = true
+gui.Destroying:Connect(function() alive = false end)
+
+-- -------- พื้นหลังแดง + สัญญาณรบกวน --------
+local noise = new("CanvasGroup", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.fromRGB(90, 0, 0),
+	BorderSizePixel = 0,
+	ZIndex = 1,
+}, gui)
+
+local noiseCells = {}
+local COLS, ROWS = 16, 9
+for r = 0, ROWS - 1 do
+	for c = 0, COLS - 1 do
+		noiseCells[#noiseCells + 1] = new("Frame", {
+			Position = UDim2.fromScale(c / COLS, r / ROWS),
+			Size = UDim2.fromScale(1 / COLS + 0.003, 1 / ROWS + 0.003),
+			BackgroundColor3 = Color3.fromRGB(120, 0, 0),
+			BorderSizePixel = 0,
+		}, noise)
+	end
+end
+
+local loadingBox = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(300, 22),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BorderSizePixel = 0,
+	ZIndex = 3,
+}, noise)
+new("UIStroke", { Color = Color3.fromRGB(255, 40, 40), Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, loadingBox)
+new("UIScale", { Scale = S }, loadingBox)
+new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 0, -4),
+	Size = UDim2.fromOffset(300, 18),
+	BackgroundTransparency = 1,
+	Text = "LOADING...",
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	TextColor3 = Color3.fromRGB(255, 60, 60),
+	ZIndex = 3,
+}, loadingBox)
+
+local SEGMENTS = 20
+local segs = {}
+for i = 1, SEGMENTS do
+	segs[i] = new("Frame", {
+		Position = UDim2.new((i - 1) / SEGMENTS, 3, 0, 3),
+		Size = UDim2.new(1 / SEGMENTS, -4, 1, -6),
+		BackgroundColor3 = Color3.fromRGB(230, 20, 20),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 4,
+	}, loadingBox)
+end
+
+-- -------- Layer ของหน้าต่าง --------
+local layer = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	ZIndex = 5,
+}, gui)
+
+local zCounter = 5
+local queue = {}
+local glitchList = {}
+local GLITCH_COLORS = {
+	Color3.fromRGB(255, 0, 255),
+	Color3.fromRGB(0, 0, 0),
+	Color3.fromRGB(0, 255, 255),
+	Color3.fromRGB(255, 0, 0),
+	Color3.fromRGB(255, 255, 255),
+	Color3.fromRGB(0, 255, 70),
+	Color3.fromRGB(40, 0, 70),
+}
+
+local function makeWindow(title, w, h, px, py, z)
+	local win = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(px, py),
+		Size = UDim2.fromOffset(w, h),
+		BackgroundColor3 = Color3.fromRGB(205, 205, 205),
+		BackgroundTransparency = 0.12,
+		BorderSizePixel = 0,
+		ZIndex = z,
+	}, layer)
+	new("UICorner", { CornerRadius = UDim.new(0, 4) }, win)
+	new("UIStroke", { Color = Color3.fromRGB(120, 120, 120), Thickness = 1.5 }, win)
+	local sc = new("UIScale", { Scale = 0 }, win)
+	new("TextLabel", {
+		Position = UDim2.fromOffset(6, 1),
+		Size = UDim2.new(1, -12, 0, 16),
+		BackgroundTransparency = 1,
+		Text = title,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextColor3 = Color3.fromRGB(245, 245, 245),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, win)
+	local body = new("Frame", {
+		Position = UDim2.fromOffset(4, 18),
+		Size = UDim2.new(1, -8, 1, -22),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, win)
+	tween(sc, 0.22, Back, Out, { Scale = S })
+	return win, body, sc
+end
+
+local function nextZ()
+	zCounter += 1
+	if zCounter > 40 then zCounter = 6 end
+	return zCounter
+end
+
+local function fillGlitch(body, cols, rows)
+	local cells = {}
+	for r = 0, rows - 1 do
+		for c = 0, cols - 1 do
+			cells[#cells + 1] = new("Frame", {
+				Position = UDim2.fromScale(c / cols, r / rows),
+				Size = UDim2.fromScale(1 / cols + 0.01, 1 / rows + 0.01),
+				BackgroundColor3 = GLITCH_COLORS[rng:NextInteger(1, #GLITCH_COLORS)],
+				BorderSizePixel = 0,
+			}, body)
+		end
+	end
+	return cells
+end
+
+local function ransomWindow(px, py)
+	local win, body = makeWindow("RANSOM", 250, 150, px, py, nextZ())
+	body.BackgroundColor3 = Color3.fromRGB(235, 25, 25)
+
+	local icon = new("Frame", {
+		Position = UDim2.fromOffset(8, 6),
+		Size = UDim2.fromOffset(36, 36),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+	}, body)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, icon)
+	for _, ex in ipairs({ 9, 21 }) do
+		local eye = new("Frame", {
+			Position = UDim2.fromOffset(ex, 12),
+			Size = UDim2.fromOffset(6, 6),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+		}, icon)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, eye)
+	end
+
+	new("TextLabel", {
+		Position = UDim2.fromOffset(50, 4),
+		Size = UDim2.new(1, -56, 0, 40),
+		BackgroundTransparency = 1,
+		Text = "YOUR ITEMS HAVE\nBEEN ENCRYPTED",
+		Font = Enum.Font.GothamBlack,
+		TextSize = 14,
+		TextColor3 = Color3.new(1, 1, 1),
+	}, body)
+
+	local info = new("Frame", {
+		Position = UDim2.fromOffset(6, 48),
+		Size = UDim2.new(1, -12, 0, 46),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+	}, body)
+	new("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		RichText = true,
+		TextWrapped = true,
+		Text = 'IF YOU DO NOT PAY THIS RANSOM BEFORE THE TIMER ENDS, YOUR ITEMS WILL BE <font color="#ff2a2a">UNRECOVERABLE BY ANY MEANS.</font>',
+		Font = Enum.Font.GothamBold,
+		TextSize = 10,
+		TextColor3 = Color3.new(1, 1, 1),
+	}, info)
+
+	local price = new("Frame", {
+		Position = UDim2.fromOffset(6, 100),
+		Size = UDim2.fromOffset(84, 22),
+		BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+		BorderSizePixel = 0,
+	}, body)
+	new("UIStroke", { Color = Color3.fromRGB(255, 200, 40), Thickness = 1.5 }, price)
+	new("TextLabel", {
+		Position = UDim2.fromOffset(6, 0),
+		Size = UDim2.fromOffset(44, 22),
+		BackgroundTransparency = 1,
+		Text = "150",
+		Font = Enum.Font.GothamBlack,
+		TextSize = 14,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, price)
+	local coin = new("Frame", {
+		Position = UDim2.fromOffset(58, 4),
+		Size = UDim2.fromOffset(14, 14),
+		BackgroundColor3 = Color3.fromRGB(255, 200, 40),
+		BorderSizePixel = 0,
+	}, price)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, coin)
+
+	local timer = new("Frame", {
+		Position = UDim2.fromOffset(96, 100),
+		Size = UDim2.new(1, -102, 0, 22),
+		BackgroundColor3 = Color3.fromRGB(150, 0, 0),
+		BorderSizePixel = 0,
+	}, body)
+	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5 }, timer)
+	new("TextLabel", {
+		Position = UDim2.fromOffset(6, 0),
+		Size = UDim2.fromOffset(50, 22),
+		BackgroundTransparency = 1,
+		Text = "TIME:",
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, timer)
+	local timeLabel = new("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -6, 0, 0),
+		Size = UDim2.fromOffset(60, 22),
+		BackgroundTransparency = 1,
+		Text = "00:58",
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, timer)
+
+	task.spawn(function()
+		local t = 58
+		while alive and win.Parent do
+			timeLabel.Text = string.format("%02d:%02d", t // 60, t % 60)
+			t = math.max(0, t - 1)
+			task.wait(1)
+		end
+	end)
+	return win
+end
+
+local GLITCH_TITLES = { "RNAS0M", "BRAANNSSOOMM", "UNTITLED.EXE", "INCOMPLETE%", "ERR0R", "RANS0M" }
+local function glitchWindow(px, py)
+	local w, h = rng:NextInteger(110, 170), rng:NextInteger(64, 100)
+	local win, body = makeWindow(GLITCH_TITLES[rng:NextInteger(1, #GLITCH_TITLES)], w, h, px, py, nextZ())
+	glitchList[#glitchList + 1] = { win = win, cells = fillGlitch(body, 9, 5), active = true }
+	return win
+end
+
+-- ตัวสั่นของกลิตช์ + สัญญาณรบกวนพื้นหลังแดง
+task.spawn(function()
+	while alive do
+		if noise.Visible and noise.GroupTransparency < 1 then
+			for _, cell in ipairs(noiseCells) do
+				cell.BackgroundColor3 = Color3.fromRGB(rng:NextInteger(40, 200), 0, rng:NextInteger(0, 14))
+			end
+		end
+		for i = #glitchList, 1, -1 do
+			local g = glitchList[i]
+			if not g.win.Parent then
+				table.remove(glitchList, i)
+			elseif g.active then
+				for _, cell in ipairs(g.cells) do
+					if rng:NextNumber() < 0.35 then
+						cell.BackgroundColor3 = GLITCH_COLORS[rng:NextInteger(1, #GLITCH_COLORS)]
+					end
+				end
+			end
+		end
+		task.wait(0.09)
+	end
+end)
+
+-- -------- หน้าต่าง KEY + ช่องใส่คีย์ --------
+local unlocked = false
+local promptWin
+
+local function openPrompt()
+	if promptWin and promptWin.Parent then return end
+	local win, body = makeWindow("ENTER KEY", 270, 140, 0.5, 0.5, 100)
+	promptWin = win
+
+	new("TextLabel", {
+		Position = UDim2.fromOffset(6, 4),
+		Size = UDim2.new(1, -12, 0, 22),
+		BackgroundTransparency = 1,
+		Text = "ใส่คีย์เพื่อปลดล็อก",
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+		TextColor3 = Color3.new(1, 1, 1),
+	}, body)
+
+	local box = new("TextBox", {
+		Position = UDim2.fromOffset(10, 30),
+		Size = UDim2.new(1, -20, 0, 34),
+		BackgroundColor3 = Color3.fromRGB(25, 25, 25),
+		BorderSizePixel = 0,
+		Text = "",
+		PlaceholderText = "KEY...",
+		PlaceholderColor3 = Color3.fromRGB(120, 120, 120),
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamBlack,
+		TextSize = 20,
+		TextColor3 = Color3.fromRGB(255, 60, 60),
+	}, body)
+	new("UICorner", { CornerRadius = UDim.new(0, 4) }, box)
+	new("UIStroke", { Color = Color3.fromRGB(235, 25, 25), Thickness = 2 }, box)
+
+	local status = new("TextLabel", {
+		Position = UDim2.fromOffset(10, 68),
+		Size = UDim2.new(1, -20, 0, 16),
+		BackgroundTransparency = 1,
+		Text = "",
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = Color3.fromRGB(255, 60, 60),
+	}, body)
+
+	local submit = new("TextButton", {
+		Position = UDim2.fromOffset(10, 88),
+		Size = UDim2.new(1, -20, 0, 24),
+		BackgroundColor3 = Color3.fromRGB(235, 25, 25),
+		BorderSizePixel = 0,
+		Text = "SUBMIT",
+		Font = Enum.Font.GothamBlack,
+		TextSize = 15,
+		TextColor3 = Color3.new(1, 1, 1),
+		AutoButtonColor = true,
+	}, body)
+	new("UICorner", { CornerRadius = UDim.new(0, 4) }, submit)
+
+	local function trySubmit()
+		if unlocked then return end
+		local txt = box.Text:gsub("^%s+", ""):gsub("%s+$", "")
+		local a, b = txt, KEY
+		if not CASE_SENSITIVE then a, b = a:upper(), b:upper() end
+		if a == b then
+			status.TextColor3 = Color3.fromRGB(60, 255, 90)
+			status.Text = "ACCESS GRANTED"
+			unlock()
+		else
+			status.TextColor3 = Color3.fromRGB(255, 60, 60)
+			status.Text = "KEY ผิด ลองใหม่"
+			local p = win.Position
+			for i = 1, 4 do
+				win.Position = p + UDim2.fromOffset(i % 2 == 0 and 8 or -8, 0)
+				task.wait(0.04)
+			end
+			win.Position = p
+		end
+	end
+	submit.MouseButton1Click:Connect(trySubmit)
+	box.FocusLost:Connect(function(enterPressed)
+		if enterPressed then trySubmit() end
+	end)
+end
+
+local keySpawned = false
+local function spawnKeyWindow()
+	keySpawned = true
+	local px, py = rng:NextNumber(0.15, 0.85), rng:NextNumber(0.2, 0.8)
+	local win, body = makeWindow("KEY", 150, 80, px, py, 50)
+	local g = { win = win, cells = fillGlitch(body, 9, 5), active = true }
+	glitchList[#glitchList + 1] = g
+
+	local tap = new("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 5,
+	}, body)
+	local tapped = false
+	tap.MouseButton1Click:Connect(function()
+		if tapped then return end
+		tapped = true
+		g.active = false
+		for _, cell in ipairs(g.cells) do
+			cell.BackgroundColor3 = Color3.new(0, 0, 0)
+		end
+		local label = new("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Text = "",
+			Font = Enum.Font.GothamBlack,
+			TextSize = 36,
+			TextColor3 = Color3.fromRGB(255, 60, 255),
+			ZIndex = 6,
+		}, body)
+		for i = 1, #KEY do
+			label.Text = string.sub(KEY, 1, i)
+			task.wait(0.18)
+		end
+		task.wait(0.5)
+		openPrompt()
+	end)
+end
+
+-- =====================================================================
+-- ส่วนที่ 2: GoreBox UI (เล่นหลังปลดล็อก)
+-- =====================================================================
+
+local function buildGoreBox()
+	-- ===== เพลง =====
+	local music = new("Sound", {
+		Name = "GoreBoxMusic",
+		SoundId = "rbxassetid://" .. tostring(MUSIC_ID),
+		Looped = true,
+		Volume = MUSIC_VOLUME,
+	}, SoundService)
+	music:Play()
+	task.delay(8, function()
+		if not music.IsLoaded then
+			warn("[GoreBoxUI] โหลดเพลงไม่ขึ้น: " .. music.SoundId)
+		end
+	end)
+
+	-- ===== ข้อความต้อนรับ =====
+	local welcome = new("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.62),
+		Size = UDim2.new(0.9, 0, 0, 60),
+		BackgroundTransparency = 1,
+		Text = WELCOME,
+		Font = Enum.Font.GothamMedium,
+		TextScaled = true,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextTransparency = 1,
+		ZIndex = 10,
+	}, gui)
+	new("UITextSizeConstraint", { MaxTextSize = 34 }, welcome)
+	local welcomeStroke = new("UIStroke", { Color = BLACK, Thickness = 2, Transparency = 1 }, welcome)
+
+	-- ===== ดาวสีน้ำเงิน =====
+	local STAR_R = 95
+	local starHolder = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(STAR_R * 2, STAR_R * 2),
+		BackgroundTransparency = 1,
+		Visible = false,
+		ZIndex = 10,
+	}, gui)
+	local starScale = new("UIScale", { Scale = 0 }, starHolder)
+
+	do
+		local R, r, rowH = STAR_R, STAR_R * 0.47, 2
+		local pts = {}
+		for i = 0, 9 do
+			local ang = math.rad(-90 + i * 36)
+			local rad = (i % 2 == 0) and R or r
+			pts[#pts + 1] = Vector2.new(R + rad * math.cos(ang), R + rad * math.sin(ang))
+		end
+		local y = 0
+		while y < R * 2 do
+			local yc = y + rowH / 2
+			local xs = {}
+			for i = 1, #pts do
+				local a, b = pts[i], pts[i % #pts + 1]
+				if (a.Y <= yc and b.Y > yc) or (b.Y <= yc and a.Y > yc) then
+					local t = (yc - a.Y) / (b.Y - a.Y)
+					xs[#xs + 1] = a.X + t * (b.X - a.X)
+				end
+			end
+			table.sort(xs)
+			for k = 1, #xs - 1, 2 do
+				new("Frame", {
+					Position = UDim2.fromOffset(xs[k], y),
+					Size = UDim2.fromOffset(xs[k + 1] - xs[k], rowH + 0.5),
+					BackgroundColor3 = STAR_COLOR,
+					BorderSizePixel = 0,
+				}, starHolder)
+			end
+			y += rowH
+		end
+	end
+
+	-- ===== สี่เหลี่ยมดำขอบม่วงชมพู =====
+	local sq = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(0, 0),
+		BackgroundColor3 = BLACK,
+		BorderSizePixel = 0,
+		Visible = false,
+		ZIndex = 20,
+	}, gui)
+	new("UIStroke", { Color = MAGENTA, Thickness = 5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sq)
+
+	-- ===== กล่อง UI หลัก =====
+	local main = new("Frame", {
+		Name = "Main",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(0, 0),
+		BackgroundColor3 = BLACK,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Visible = false,
+		ZIndex = 30,
+	}, gui)
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, main)
+	new("UIStroke", { Color = MAGENTA, Thickness = 4, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, main)
+	local fitScale = new("UIScale", { Scale = 1 }, main)
+
+	local function fit()
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		local vp = cam.ViewportSize
+		fitScale.Scale = math.clamp(math.min(1, vp.Y * 0.75 / BOX_H, vp.X * 0.9 / BOX_W), 0.5, 1)
+	end
+	fit()
+	local function hookCamera()
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		cam:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
+		fit()
+	end
+	hookCamera()
+	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(hookCamera)
+
+	new("TextLabel", {
+		Position = UDim2.fromOffset(16, 10),
+		Size = UDim2.new(1, -90, 0, 36),
+		BackgroundTransparency = 1,
+		Text = TITLE,
+		Font = Enum.Font.GothamBold,
+		TextSize = 28,
+		TextColor3 = TITLE_COLOR,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 31,
+	}, main)
+
+	local closeBtn = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -6, 0, 6),
+		Size = UDim2.fromOffset(40, 40),
+		BackgroundColor3 = BLACK,
+		BorderSizePixel = 0,
+		Text = "X",
+		Font = Enum.Font.GothamBlack,
+		TextSize = 30,
+		TextColor3 = X_COLOR,
+		AutoButtonColor = false,
+		ZIndex = 32,
+	}, main)
+	new("UIStroke", { Color = MAGENTA, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, closeBtn)
+
+	-- ===== ตัวควบคุมเพลง =====
+	if SHOW_CONTROLS then
+		local volLabel = new("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 96),
+			Size = UDim2.fromOffset(360, 22),
+			BackgroundTransparency = 1,
+			Text = "Volume",
+			Font = Enum.Font.GothamBold,
+			TextSize = 16,
+			TextColor3 = TITLE_COLOR,
+			ZIndex = 31,
+		}, main)
+
+		local track = new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 132),
+			Size = UDim2.fromOffset(360, 12),
+			BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+			BorderSizePixel = 0,
+			ZIndex = 31,
+		}, main)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+		local fill = new("Frame", {
+			Size = UDim2.fromScale(0, 1),
+			BackgroundColor3 = MAGENTA,
+			BorderSizePixel = 0,
+			ZIndex = 32,
+		}, track)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+		local knob = new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0, 0.5),
+			Size = UDim2.fromOffset(26, 26),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			ZIndex = 33,
+		}, track)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+		new("UIStroke", { Color = MAGENTA, Thickness = 2 }, knob)
+
+		local function setVolume(v)
+			local vol = math.clamp(math.floor(v + 0.5), 0, 100)
+			music.Volume = vol / 10
